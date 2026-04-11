@@ -9,9 +9,6 @@ pub mod ui;
 
 pub mod server;
 
-/// Event handler.
-pub mod handler;
-
 // Game related structures
 pub mod game_logic;
 
@@ -38,3 +35,5 @@ pub mod lichess;
 
 // Sound effects
 pub mod sound;
+
+pub mod handlers;
