@@ -8,6 +8,7 @@ use crate::game_logic::game::GameState;
 use crate::game_logic::opponent::wait_for_game_start;
 use crate::game_logic::opponent::{Opponent, OpponentKind};
 use crate::game_logic::puzzle::PuzzleGame;
+use crate::handlers::game_mode_menu::AvailableGameMode;
 use crate::lichess::{LichessClient, LichessError};
 use crate::server::game_server::GameServer;
 use crate::skin::{PieceStyle, Skin};
@@ -16,12 +17,11 @@ use log::LevelFilter;
 use shakmaty::{Color, Move};
 use std::error;
 use std::fs::{self, File};
-use std::io::{Write};
+use std::io::Write;
 use std::net::{IpAddr, UdpSocket};
 use std::sync::mpsc::{channel, Receiver};
 use std::thread::sleep;
 use std::time::Duration;
-use crate::handlers::game_mode_menu::AvailableGameMode;
 
 /// Application result type.
 pub type AppResult<T> = std::result::Result<T, Box<dyn error::Error>>;
@@ -49,7 +49,7 @@ impl ThemeState {
     }
 
     /// Gets the previous skin
-    pub fn get_next_skin(&mut self) -> Skin{
+    pub fn get_next_skin(&mut self) -> Skin {
         if self.available_skins.is_empty() {
             return Skin::default_display_mode();
         }
@@ -68,8 +68,8 @@ impl ThemeState {
         self.available_skins[next_index].clone()
     }
 
-        /// Gets the previous skin
-    pub fn get_previous_skin(&mut self) -> Skin{
+    /// Gets the previous skin
+    pub fn get_previous_skin(&mut self) -> Skin {
         if self.available_skins.is_empty() {
             return Skin::default_display_mode();
         }
@@ -88,8 +88,8 @@ impl ThemeState {
         self.available_skins[next_index].clone()
     }
 
-    pub fn get_skin(&self, next: bool) -> Skin{
-         if self.available_skins.is_empty() {
+    pub fn get_skin(&self, next: bool) -> Skin {
+        if self.available_skins.is_empty() {
             return Skin::default_display_mode();
         }
 
@@ -103,8 +103,7 @@ impl ThemeState {
         match next {
             true => {
                 let next_index = (current_index + 1) % self.available_skins.len();
-                return self.available_skins[next_index].clone()
-
+                return self.available_skins[next_index].clone();
             }
             // previous skin
             false => {
@@ -113,7 +112,7 @@ impl ThemeState {
                 } else {
                     current_index - 1
                 };
-                return self.available_skins[previous_index].clone()
+                return self.available_skins[previous_index].clone();
             }
         }
     }
@@ -172,6 +171,10 @@ pub struct GameModeState {
     pub clock_cursor: u32,
     /// Custom time in minutes (used when clock_cursor == TIME_CONTROL_CUSTOM_INDEX)
     pub custom_time_minutes: u32,
+    /// Whether the player selected the Random color option
+    pub is_random_color: bool,
+    // Selected color when playing against the bot or in multiplayer
+    pub selected_color: Option<Color>,
 }
 impl GameModeState {
     pub fn default() -> Self {
@@ -181,6 +184,8 @@ impl GameModeState {
             form_active: false,
             clock_cursor: 3,         // Default: Rapid (index 3 = 15 minutes)
             custom_time_minutes: 10, // Default custom time: 10 minutes
+            selected_color: None,
+            is_random_color: false,
         }
     }
 
@@ -225,12 +230,53 @@ impl GameModeState {
             4 => "Longer games (e.g., 60 minutes)".to_string(),
             5 => "Play without any time limits".to_string(),
             x if x == crate::constants::TIME_CONTROL_CUSTOM_INDEX => {
-                format!(
-                    "Custom time: {} minutes per side",
-                    self.custom_time_minutes
-                )
+                format!("Custom time: {} minutes per side", self.custom_time_minutes)
             }
             _ => "Medium games (e.g., 10 minutes)".to_string(), // Default fallback
+        }
+    }
+
+    pub fn select_previous_color_option(&mut self) {
+
+        if self.selected_color == Some(Color::White)
+            || self.selected_color.is_none() && !self.is_random_color
+        {
+            self.selected_color = None;
+            self.is_random_color = true;
+        } else if self.is_random_color {
+            self.selected_color = Some(Color::Black);
+            self.is_random_color = false;
+        } else if self.selected_color == Some(Color::Black) {
+            self.selected_color = Some(Color::White);
+            self.is_random_color = false;
+        }
+    }
+
+    pub fn select_next_color_option(&mut self) {
+        if self.selected_color == Some(Color::White)
+            || self.selected_color.is_none() && !self.is_random_color
+        {
+            self.selected_color = Some(Color::Black);
+            self.is_random_color = false;
+        } else if self.selected_color == Some(Color::Black) {
+            self.selected_color = None;
+            self.is_random_color = true;
+        } else if self.is_random_color {
+            self.selected_color = Some(Color::White);
+            self.is_random_color = false;
+        }
+    }
+
+    pub fn resolve_selected_color(&mut self) {
+        if self.is_random_color {
+            self.selected_color = Some(if rand::random::<bool>() {
+                Color::White
+            } else {
+                Color::Black
+            });
+        } else if self.selected_color.is_none() {
+            self.selected_color = Some(Color::White);
+            self.is_random_color = false;
         }
     }
 }
@@ -298,9 +344,6 @@ pub struct App {
     /// Current popup to render
     pub current_popup: Option<Popups>,
 
-    // Selected color when playing against the bot or in multiplayer
-    pub selected_color: Option<Color>,
-
     /// Error message for Error popup
     pub popup_message: Option<String>,
 
@@ -327,9 +370,6 @@ pub struct App {
 
     /// Whether the game ended due to time running out
     pub game_ended_by_time: bool,
-
-    /// Whether the player selected the Random color option
-    pub is_random_color: bool,
 }
 
 impl Default for App {
@@ -339,9 +379,7 @@ impl Default for App {
             game: Game::default(),
             current_page: Pages::Home,
             current_popup: None,
-            selected_color: None,
             menu_cursor: 0,
-            is_random_color: false,
             log_level: LevelFilter::Off,
             popup_message: None,
             // TODO: Make a skin::default implem
@@ -359,45 +397,6 @@ impl Default for App {
 }
 
 impl App {
-    pub fn select_previous_color_option(&mut self) {
-        if self.selected_color == Some(Color::White) || self.selected_color.is_none() && !self.is_random_color {
-            self.selected_color = None;
-            self.is_random_color = true;
-        } else if self.is_random_color {
-            self.selected_color = Some(Color::Black);
-            self.is_random_color = false;
-        } else if self.selected_color == Some(Color::Black) {
-            self.selected_color = Some(Color::White);
-            self.is_random_color = false;
-        }
-    }
-
-    pub fn select_next_color_option(&mut self) {
-        if self.selected_color == Some(Color::White) || self.selected_color.is_none() && !self.is_random_color {
-            self.selected_color = Some(Color::Black);
-            self.is_random_color = false;
-        } else if self.selected_color == Some(Color::Black) {
-            self.selected_color = None;
-            self.is_random_color = true;
-        } else if self.is_random_color {
-            self.selected_color = Some(Color::White);
-            self.is_random_color = false;
-        }
-    }
-
-    pub fn resolve_selected_color(&mut self) {
-        if self.is_random_color {
-            self.selected_color = Some(if rand::random::<bool>() {
-                Color::White
-            } else {
-                Color::Black
-            });
-        } else if self.selected_color.is_none() {
-            self.selected_color = Some(Color::White);
-            self.is_random_color = false;
-        }
-    }
-
     pub fn toggle_help_popup(&mut self) {
         if self.current_popup == Some(Popups::Help) {
             self.close_popup();
@@ -437,10 +436,13 @@ impl App {
     }
 
     pub fn create_opponent(&mut self) {
-        let other_player_color = self.selected_color.map(|c| c.other());
+        let other_player_color = self.game_mode_state.selected_color.map(|c| c.other());
 
         if self.multiplayer_state.hosting.unwrap_or(false) {
-            log::info!("Setting up host with color: {:?}", self.selected_color);
+            log::info!(
+                "Setting up host with color: {:?}",
+                self.game_mode_state.selected_color
+            );
             self.current_popup = Some(Popups::WaitingForOpponentToJoin);
             if let Some(ip) = self.get_host_ip() {
                 self.multiplayer_state.host_ip = Some(format!("{}:{}", ip, NETWORK_PORT));
@@ -517,8 +519,8 @@ impl App {
                     }
                 } else {
                     log::info!("Setting up client (non-host) player");
-                    self.selected_color = Some(opponent.color.other());
-                    self.is_random_color = false;
+                    self.game_mode_state.selected_color = Some(opponent.color.other());
+                    self.game_mode_state.is_random_color = false;
                     opponent.game_started = true;
                 }
                 self.game.logic.opponent = Some(opponent);
@@ -531,7 +533,7 @@ impl App {
             }
         }
 
-        if self.selected_color.unwrap_or(Color::White) == Color::Black {
+        if self.game_mode_state.selected_color.unwrap_or(Color::White) == Color::Black {
             log::debug!("Flipping board for black player");
             self.game.logic.game_board.flip_the_board();
         }
@@ -837,8 +839,8 @@ impl App {
             Some(player_move_tx),
         );
 
-        self.selected_color = Some(color);
-        self.is_random_color = false;
+        self.game_mode_state.selected_color = Some(color);
+        self.game_mode_state.is_random_color = false;
         self.game.logic.opponent = Some(opponent);
 
         if color == Color::Black {
@@ -1032,8 +1034,8 @@ impl App {
         // Clear opponent - puzzles don't use Lichess multiplayer, so no polling needed
         // This stops any polling threads from previous Lichess games
         self.game.logic.opponent = None;
-        self.selected_color = None;
-        self.is_random_color = false;
+        self.game_mode_state.selected_color = None;
+        self.game_mode_state.is_random_color = false;
 
         // Reset game state to Playing (in case it was Checkmate/Draw from previous puzzle)
         // This must be done early to prevent check_and_show_game_end from re-showing the popup
@@ -1420,7 +1422,8 @@ impl App {
     }
 
     pub fn bot_setup(&mut self) {
-        let is_bot_starting = self.selected_color.unwrap_or(Color::White) == shakmaty::Color::Black;
+        let is_bot_starting =
+            self.game_mode_state.selected_color.unwrap_or(Color::White) == shakmaty::Color::Black;
         let path = self.bot_state.chess_engine_path.as_deref().unwrap_or("");
         self.game.logic.bot = Some(Bot::new(
             path,
@@ -1435,7 +1438,7 @@ impl App {
             self.game.logic.clock = Some(Clock::new(seconds));
         }
 
-        if let Some(color) = self.selected_color {
+        if let Some(color) = self.game_mode_state.selected_color {
             if color == Color::Black {
                 // Flip the board once so Black player sees from their perspective
                 self.game.logic.game_board.flip_the_board();
@@ -1475,8 +1478,8 @@ impl App {
         // Clear related fields
         self.multiplayer_state.hosting = None;
         self.multiplayer_state.host_ip = None;
-        self.selected_color = None;
-        self.is_random_color = false;
+        self.game_mode_state.selected_color = None;
+        self.game_mode_state.is_random_color = false;
         self.multiplayer_state.game_start_rx = None;
 
         self.game.logic.opponent = None;
@@ -1498,8 +1501,8 @@ impl App {
         let is_local_game = self.current_page == Pages::Solo && bot.is_none() && opponent.is_none();
         let is_bot_game = bot.is_some() && opponent.is_none();
 
-        if is_bot_game && self.is_random_color {
-            self.selected_color = Some(if rand::random::<bool>() {
+        if is_bot_game && self.game_mode_state.is_random_color {
+            self.game_mode_state.selected_color = Some(if rand::random::<bool>() {
                 Color::White
             } else {
                 Color::Black
@@ -1511,7 +1514,8 @@ impl App {
         self.game.logic.bot = bot;
         self.game.logic.opponent = opponent;
         if let Some(bot) = self.game.logic.bot.as_mut() {
-            bot.is_bot_starting = self.selected_color.unwrap_or(Color::White) == Color::Black;
+            bot.is_bot_starting =
+                self.game_mode_state.selected_color.unwrap_or(Color::White) == Color::Black;
         }
         // Restore skin, display mode and piece styles
         self.game.ui.skin = current_skin;
@@ -1599,12 +1603,11 @@ impl App {
         }
     }
 
-    pub fn cycle_skin(&mut self, next: bool){
+    pub fn cycle_skin(&mut self, next: bool) {
         let future_skin = self.theme_state.get_skin(next);
         let future_skin_name = future_skin.clone().name;
 
-
-        crate::sound::play_menu_nav_sound();  // move
+        crate::sound::play_menu_nav_sound(); // move
 
         // Update selected skin name and apply it
         self.theme_state.loaded_skin = Some(future_skin.clone());
@@ -1617,7 +1620,6 @@ impl App {
             "ASCII" => self.game.ui.display_mode = DisplayMode::ASCII,
             _ => self.game.ui.display_mode = DisplayMode::CUSTOM,
         }
-
     }
 
     pub fn update_config(&self) {
@@ -1729,8 +1731,8 @@ impl App {
             self.game.ui.skin = skin.clone();
         }
         self.close_popup();
-        self.selected_color = None;
-        self.is_random_color = false;
+        self.game_mode_state.selected_color = None;
+        self.game_mode_state.is_random_color = false;
         self.multiplayer_state.hosting = None;
         self.multiplayer_state.host_ip = None;
         self.menu_cursor = 0;
@@ -1845,7 +1847,7 @@ impl App {
         } else {
             // In multiplayer/Lichess mode, only allow input if it's our turn (but not for promotion, handled above)
             if self.current_page == Pages::Multiplayer || self.current_page == Pages::Lichess {
-                if let Some(my_color) = self.selected_color {
+                if let Some(my_color) = self.game_mode_state.selected_color {
                     // For TCP multiplayer, additional check is done in handle_cell_click
                     // For Lichess, we need to check here
                     if self.current_page == Pages::Lichess {
@@ -1886,7 +1888,8 @@ impl App {
                     None
                 };
 
-            self.game.handle_cell_click(self.selected_color);
+            self.game
+                .handle_cell_click(self.game_mode_state.selected_color);
 
             // Check if the move resulted in a promotion state
             if self.game.logic.game_state == GameState::Promotion {
@@ -1954,8 +1957,8 @@ impl App {
         self.lichess_state.seek_receiver = None;
 
         // Reset game-related state
-        self.selected_color = None;
-        self.is_random_color = false;
+        self.game_mode_state.selected_color = None;
+        self.game_mode_state.is_random_color = false;
         self.game.logic.bot = None;
         self.bot_state.bot_move_receiver = None;
 
@@ -2012,7 +2015,7 @@ impl App {
         self.game_mode_state.custom_time_minutes = 10; // Reset custom time
         self.navigate_to_homepage();
     }
-    
+
     pub fn show_message_popup(&mut self, message: String, popup_type: Popups) {
         self.popup_message = Some(message);
         self.current_popup = Some(popup_type);
